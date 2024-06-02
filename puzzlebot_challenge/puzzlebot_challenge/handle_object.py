@@ -1,7 +1,8 @@
 import rclpy
 from rclpy.node import Node
 import numpy as np
-from geometry_msgs.msg import Point, Pose, Twist
+import time
+from geometry_msgs.msg import Point, Twist
 from nav_msgs.msg import Odometry
 from puzzlebot_msgs.msg import ArucoArray, Arucoinfo
 from std_msgs.msg import Int32, Float32, Bool
@@ -15,13 +16,23 @@ class ObjectHandler(Node):
         self.aruco_sub = self.create_subscription(ArucoArray, '/aruco_info', self.aruco_callback, 10)
         self.handle_sub = self.create_subscription(Int32, '/handle', self.handle_callback, 10)
         self.odom_sub = self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
+        self.handle_run_sub = self.create_subscription(Bool, '/handle_run', self.align_to_aruco, 1)
 
         # Publishers
-        self.handled_pub = self.create_publisher(Bool, '/handled_arcuo', 1)
+        self.handled_pub = self.create_publisher(Bool, '/handled_aruco', 1)
         self.pick_or_drop_pub = self.create_publisher(Float32, '/ServoAngle', 1)
-        self.pose_pub = self.create_publisher(Pose, '/cmd_vel', 1)
+        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 1)
 
         # Control variables
+        self.total_position_error = 0.0
+        self.angle_error = 0.0
+
+        self.prev_position_error = 0.0
+        self.prev_angle_error = 0.0
+
+        self.output_position = 0.0
+        self.output_angle = 0.0
+
         self.output_velocity = Twist()
         self.output_error = Point()
 
@@ -29,35 +40,69 @@ class ObjectHandler(Node):
         self.linear_ki = 0.0
         self.linear_kd = 0.05
 
-        self.angular_kp = 0.48
+        self.angular_kp = 0.05
         self.angular_ki = 0.0
         self.angular_kd = 0.02
 
         self.integral = 0.0
 
+        self.aruco_handled = Bool()
+        self.aruco_handled.data = False
         self.aligned = False
+        self.handle_instruction = Int32()
 
-        # Aruco
-        self.aruco = Arucoinfo()
+        # Aruco data
+        self.aruco_array = ArucoArray()
+        
+        self.left_aruco = Arucoinfo()
+        self.right_aruco = Arucoinfo()
 
-        # Target position
-        self.target_x, self.target_y, self.target_angle = self.target_position()
+        # Goal data
+        self.a_goal = Arucoinfo()
+        self.b_goal = Arucoinfo()
+        self.c_goal = Arucoinfo()
 
-        # Start the timer now
-        self.start_time = self.get_clock().now()
-        time_period = 0.1
-        self.timer = self.create_timer(time_period, self.align_to_aruco)
+        self.a_goal_init_offset = 0.0
+        self.b_goal_init_offset = 0.0
+        self.c_goal_init_offset = 0.0
+
+        # Puzzlebot data
+        self.current_position_x = 0.0
+        self.current_position_y = 0.0
+        self.current_angle = 0.0
+
+        self.start_time= self.get_clock().now()
 
     ##############################
     # Callback Functions
     ##############################
 
     def aruco_callback(self, msg: ArucoArray):
-        self.aruco = msg.aruco_array[0]
-        self.transform_cube_position(self.aruco.point)
+        self.aruco_array = msg
 
-    def handle_callback(self, msg: Int32):
-        self.handle = msg.data
+        if msg.length > 1:
+            for index in range (0, msg.length):
+                # Aruco data
+                if msg.aruco_array[index].id == '30':
+                    self.left_aruco = msg.aruco_array[index]
+                elif msg.aruco_array[index].id == '31':
+                    self.right_aruco = msg.aruco_array[index]
+                # Goal data
+                elif msg.aruco_array[index].id == '1':
+                    self.a_goal = msg.aruco_array[index]
+                    if self.a_goal_init_offset == 0.0 and self.b_goal_init_offset == 0.0 and self.c_goal_init_offset == 0.0:
+                        self.a_goal_init_offset = self.a_goal.offset
+                elif msg.aruco_array[index].id == '8':
+                    self.b_goal = msg.aruco_array[index]
+                    if self.a_goal_init_offset == 0.0 and self.b_goal_init_offset == 0.0 and self.c_goal_init_offset == 0.0:
+                        self.b_goal_init_offset = self.b_goal.offset
+                elif msg.aruco_array[index].id == '3':
+                    self.c_goal = msg.aruco_array[index]
+                    if self.a_goal_init_offset == 0.0 and self.b_goal_init_offset == 0.0 and self.c_goal_init_offset == 0.0:
+                        self.c_goal_init_offset = self.b_goal.offset
+
+    def handle_callback(self, msg):
+        self.handle_instruction = msg
     
     def odom_callback(self, msg: Odometry):
         self.current_position_x = msg.pose.pose.position.x
@@ -71,91 +116,70 @@ class ObjectHandler(Node):
     # Handling Object
     ##############################
 
-    def align_to_aruco(self):
-        # target_x, target_y, target_angle = self.target_position
-
+    def align_to_aruco(self, msg):
         if not self.aligned:
-            self.aligned = self.velocity_control(self.target_x, self.target_y, self.target_angle)
-        elif self.aligned:
-            aruco_handled = self.handle_aruco()
-        
-        self.handled_pub.publish(aruco_handled)
+            self.aligned = self.velocity_control()
+        elif self.aligned and not self.aruco_handled.data:
+            self.handle_aruco()
+            self.aligned = False
 
     def handle_aruco(self):
+        drop_off = Float32()
+        pick_up = Float32()
+
         # Angles at which servo needs to turn to execute action
-        drop_off = 0.0
-        pick_up = 70.0
+        drop_off.data = 0.0
+        pick_up.data = 70.0
 
-        arrived = self.velocity_control(self.aruco_position_x, self.aruco_position_y, self.current_angle)
+        if self.handle_instruction.data == 0:
+            self.pick_or_drop_pub.publish(pick_up)
+        elif self.handle_instruction.data == 1:
+            self.pick_or_drop_pub.publish(drop_off)
+            self.get_logger().info(f'DROPPED')
 
-        if arrived and not aruco_handled:
-            if self.handle == 0:
-                self.pick_or_drop_pub.publish(pick_up)
-                self.pick_or_drop_pub.publish(pick_up - 5)
-            elif self.handle == 1:
-                self.pick_or_drop_pub.publish(drop_off)
-            
-            # Step back
-            aruco_handled = self.velocity_control(self.aruco_position_x - 1, self.aruco_position_y - 1, self.current_angle)
+            # self.output_velocity.linear.x = -0.1
+            # self.output_velocity.angular.z = 0.0
+            # self.cmd_vel_pub.publish(self.output_velocity)
+            # time.sleep(0.5)
 
-        return aruco_handled
+            # self.output_velocity.linear.x = 0.0
+            # self.output_velocity.angular.z = 0.0
+            # self.cmd_vel_pub.publish(self.output_velocity)
 
-    ##############################
-    # Target Data
-    ##############################
+            self.go_backwards(0.1)
+            self.get_logger().info(f'GO_BACKWARDS')
+            time.sleep(0.5)
+            self.go_stop()
+            self.get_logger().info(f'STOPPED')
 
-    def target_position(self):
-        left_bottom_corner_index = 2
-        right_bottom_corner_index = 3
-
-        left_bottom_corner_position = self.aruco.corners[left_bottom_corner_index]
-        right_bottom_corner_position = self.aruco.corners[right_bottom_corner_index]
-
-        left_to_right_corner_length = np.sqrt(left_bottom_corner_position**2 + right_bottom_corner_position**2)
-        
-        aux_cathetus_lenght = np.abs(np.abs(left_bottom_corner_position.x) - np.abs(right_bottom_corner_position.x))
-
-        # Generate offset point
-        # Direction vector
-        vector_x = left_bottom_corner_position.x - right_bottom_corner_position.x
-        vector_y = left_bottom_corner_position.y - right_bottom_corner_position.y
-
-        # Normalized Perpendicual vector
-        normal_vector_x = -vector_x / left_to_right_corner_length
-        normal_vector_y = vector_y / left_to_right_corner_length
-
-        # Paralel line
-        parallel_offset = 0.5
-        parallel_x1 = left_bottom_corner_position.x + parallel_offset * -normal_vector_x
-        parallel_y1 = left_bottom_corner_position.y + parallel_offset * -normal_vector_y
-        parallel_x2 = right_bottom_corner_position.x + parallel_offset * -normal_vector_x
-        parallel_y2 = right_bottom_corner_position.y + parallel_offset * -normal_vector_y
-
-        # Target
-        target_x = (parallel_x1 + parallel_x2) / 2
-        target_y = (parallel_y1 + parallel_y2) / 2
-        target_angle = np.arccos(aux_cathetus_lenght / left_to_right_corner_length) + self.current_angle
-        # theta_deg = np.degrees(theta_rad)
-
-        return target_x, target_y, target_angle
-
-    def transform_cube_position(self, aruco_point):
-        rotation_matrix = np.array([
-                    [np.cos(self.current_angle), -np.sin(self.current_angle)],
-                    [np.sin(self.current_angle), np.cos(self.current_angle)]
-                ])
-
-        # Camera coordinates to robot coordinates
-        puzzlebot_coords = np.array([aruco_point.z, aruco_point.x])
-        world_coords = rotation_matrix.dot(puzzlebot_coords)
-
-        # Robot coordinates to odometry coordinates
-        self.aruco_position_x = world_coords[0] + self.current_position_x
-        self.aruco_position_y = world_coords[1] + self.current_position_y
+        self.aruco_handled.data = True
+        self.handled_pub.publish(self.aruco_handled)
+        self.aruco_handled.data = False
 
     ##############################
     # Velocity Control
     ##############################
+
+    def go_fordward(self, speed):
+        self.output_velocity.linear.x = speed
+        self.output_velocity.angular.z = 0.0
+        self.cmd_vel_pub.publish(self.output_velocity)
+
+        return True
+    
+    def go_backwards(self, speed):
+        self.output_velocity.linear.x = -speed
+        self.output_velocity.angular.z = 0.0
+        self.cmd_vel_pub.publish(self.output_velocity)
+
+        return True
+    
+    def go_stop(self):
+        self.output_velocity.linear.x = 0.0
+        self.output_velocity.angular.z = 0.0
+        self.cmd_vel_pub.publish(self.output_velocity)
+
+        return True
 
     def PID(self, error, prev_error, kp, ki, kd):
         # Proportional term
@@ -174,20 +198,26 @@ class ObjectHandler(Node):
         
         return output, error
 
-    def resultant_error(self, desired_position_x, desired_position_y, desired_angle):
+    def resultant_error(self, desired_position_x, desired_position_y):
         x_error = desired_position_x - self.current_position_x
         y_error = desired_position_y - self.current_position_y
 
+        offset_scaling = 0.001
+
+        if self.handle_instruction.data == 0:
+            self.angle_error = self.left_aruco.offset * offset_scaling + self.right_aruco.offset * offset_scaling
+        elif self.handle_instruction.data == 1:
+            if self.a_goal_init_offset > 0.0:
+                self.angle_error = self.a_goal_init_offset * offset_scaling - self.a_goal.offset * offset_scaling
+            elif self.b_goal_init_offset > 0.0:
+                self.angle_error = self.b_goal_init_offset * offset_scaling - self.b_goal.offset * offset_scaling
+            elif self.c_goal_init_offset > 0.0:
+                self.angle_error = self.c_goal_init_offset * offset_scaling - self.c_goal.offset * offset_scaling
+
         self.total_position_error = np.sqrt(x_error**2 + y_error**2)
 
-        # desired_angle = np.arctan2(y_error, x_error)
-        self.angle_error = desired_angle - self.current_angle
-        
-        # Normalize angle to be within [-π, π]
-        self.angle_error = np.arctan2(np.sin(self.angle_error), np.cos(self.angle_error))
-
-    def velocity_control(self, desired_position_x, desired_position_y, desired_angle):
-        #Get time difference 
+    def velocity_control(self):
+        # Get time difference 
         self.current_time = self.start_time.to_msg()
         self.duration = self.get_clock().now() - self.start_time
 
@@ -195,30 +225,56 @@ class ObjectHandler(Node):
         self.dt = self.duration.nanoseconds * 1e-9
 
         # Calculate resultant error
-        self.resultant_error(desired_position_x, desired_position_y, desired_angle)
+        self.resultant_error(self.current_position_x + 0.1, self.current_position_y + 0.1)
 
         # Adjust current pose
-        self.output_position, self.prev_position_error = self.PID_General(self.total_position_error, self.prev_position_error, self.linear_kp, self.linear_ki, self.linear_kd)
-        self.output_angle, self.prev_angle_error = self.PID_General(self.angle_error, self.prev_angle_error, self.angular_kp, self.angular_ki, self.angular_kd)
-        
-        if abs(self.prev_angle_error) > 0.1:
-            self.output_velocity.angular.z = self.output_angle
-            self.output_velocity.linear.x = 0.0
-        else:
-            self.output_velocity.linear.x = self.output_position
-            self.output_velocity.angular.z = 0.0
+        self.output_position, self.prev_position_error = self.PID(self.total_position_error, self.prev_position_error, self.linear_kp, self.linear_ki, self.linear_kd)
+        self.output_angle, self.prev_angle_error = self.PID(self.angle_error, self.prev_angle_error, self.angular_kp, self.angular_ki, self.angular_kd)
 
-        self.output_error.x = self.total_position_error
-        self.output_error.y = self.prev_angle_error
+        self.output_velocity.linear.x = self.output_position
+        self.output_velocity.angular.z = self.output_angle
+        self.get_logger().info(f'instruction_state: {self.handle_instruction.data}')
 
-        tolerance = 0.2
+        # self.get_logger().info(f'Velocity Control: linear={self.output_velocity.linear.x} angular={self.output_velocity.angular.z}')
 
-        if self.total_position_error < tolerance and self.total_position_error > -tolerance:
-            arrive = True
-        else:
-            arrive= False
+        if self.handle_instruction.data == 0:
+            if self.aruco_array.length == 0:
+                # self.output_velocity.linear.x = 0.1
+                # self.output_velocity.angular.z = 0.0
+                # self.cmd_vel_pub.publish(self.output_velocity)
+                # time.sleep(1.9)
 
-        return arrive
+                # self.output_velocity.linear.x = 0.0
+                # self.output_velocity.angular.z = 0.0
+                # self.cmd_vel_pub.publish(self.output_velocity)
+
+                self.go_fordward(0.1)
+                time.sleep(2.4)
+                self.go_stop()
+
+                return True
+            
+            else:
+                self.cmd_vel_pub.publish(self.output_velocity)
+
+        elif self.handle_instruction.data == 1:
+            if self.aruco_array.length > 0:
+                for index in range(0, self.aruco_array.length):
+                    if self.aruco_array[index].id == '1':
+                # self.output_velocity.linear.x = 0.0
+                # self.output_velocity.angular.z = 0.0
+                # self.cmd_vel_pub.publish(self.output_velocity)
+                        self.get_logger().info(f'FOUND GOAL A')
+                        self.go_fordward(0.1)
+                        self.get_logger().info(f'FORWARD')
+                        time.sleep(0.5)
+                        self.go_stop()
+                        self.get_logger().info(f'STOPPED')
+
+                return True
+            
+            else:
+                self.cmd_vel_pub.publish(self.output_velocity)
 
 def main(args=None):
     rclpy.init(args=args)

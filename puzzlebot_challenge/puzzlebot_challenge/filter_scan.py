@@ -5,6 +5,7 @@ import rclpy
 from rclpy.node import Node
 from numpy import linspace, inf
 from math import sin
+import numpy as np
 
 # We're going to subscribe to a LaserScan message
 from sensor_msgs.msg import LaserScan
@@ -38,7 +39,7 @@ class ScanFilter(Node):
 
 		# Work out the y coordinates of the ranges
 		# points = [r * sin(theta) if (theta < -2.5 or theta > 2.5) else inf for r,theta in zip(msg.ranges, angles)]
-		points = [r * sin(theta) if (theta < -2.0 or theta > 2.0) else inf for r,theta in zip(msg.ranges, angles)]
+		points = [r * sin(theta) if (theta < -1.0 or theta > 1.0) else inf for r,theta in zip(msg.ranges, angles)]
 
 		# If we're close to the x axis, keep the range, otherwise use inf, which means "no return"
 		new_ranges = [r if abs(y) < self.extent else inf for r,y in zip(msg.ranges, points)]
@@ -48,9 +49,10 @@ class ScanFilter(Node):
 		self.pub.publish(msg)
 		# Find minimum and maximum range values
 		min_range = min(msg.ranges)
+		min_index = np.argmin(msg.ranges)
 		max_range = max(msg.ranges)
 
-		self.get_logger().info("Minimum range: {} meters, Maximum range: {} meters".format(min_range, max_range))
+		self.get_logger().info("Minimum range: {} meters and index: {},length: {}, Maximum range: {} meters".format(min_range, min_index, len(msg.ranges), max_range))
 
 
 def main(args=None):

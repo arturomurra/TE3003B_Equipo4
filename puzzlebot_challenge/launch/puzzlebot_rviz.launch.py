@@ -32,7 +32,7 @@ def generate_launch_description():
     
     pose_sim = Node(
             package='puzzlebot_challenge',
-            executable='puzzlebot_kinematics',
+            executable='pose_sim',
             name='puzzlebot_kinematics'
     )
 
@@ -54,20 +54,49 @@ def generate_launch_description():
             name='velocity_control'
     )
 
-    map_saver_process = ExecuteProcess(
-            cmd=['ros2', 'run', 'nav2_map_server', 'map_saver_cli', '-f', 'equipo4_ws/src/Autonomus-Lifter-Robot-System/puzzlebot_challenge/maps'], 
-            output='screen'
+    trayectory = Node(
+        package='puzzlebot_challenge',
+        executable='trajectory_control',
+        name='trajectory_control'
+    )
+
+    simlulation = Node(
+        package='puzzlebot_challenge',
+        executable='obstacule_sim',
+        name='obstacule_sim'
+    )
+    
+    aruco = Node(
+        package='puzzlebot_challenge',
+        executable='aruco',
+        name='aruco'
+    )
+    
+    bug2 = Node(
+        package='puzzlebot_challenge',
+        executable='bug2',
+        name='Bug2'
+    )
+
+    handle_object = Node(
+        package='puzzlebot_challenge',
+        executable='handle_object',
+        name='handle_object'
     )
 
     return LaunchDescription([
-        robot_state_publisher_node,
-        rviz_node,
-        tf2_ros,
-       # pose_sim, 
+        # robot_state_publisher_node,
+        # rviz_node,
+        # tf2_ros,
+        # pose_sim, 
         localisation,
-        joint_state, 
-        controller
-        #   map_saver_process
+        # joint_state, 
+        # controller
+        trayectory,
+        bug2,
+        aruco,
+        handle_object,
+        #simlulation
     ])
 
 if __name__ == '__main__':

@@ -64,7 +64,7 @@ def generate_launch_description():
     )
 
     return LaunchDescription(declare_configurable_parameters(configurable_parameters) + [
-#        rviz_node,
+        rviz_node,
         lidar_node,
         laser_filters,
         filter_scan,

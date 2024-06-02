@@ -41,8 +41,8 @@ setup(
             'tf_broadcaster = puzzlebot_challenge.tf_broadcaster:main',
             'slam = puzzlebot_challenge.map_slam:main',
             'bug2 = puzzlebot_challenge.bug2:main',
-            #'handle_object = puzzlebot_challenge.handle_object:main',
-            #'trajectory_control = puzzlebot_challenge.trajectory_control:main',
+            'handle_object = puzzlebot_challenge.handle_object:main',
+            'landmark = puzzlebot_challenge.landmark_detection:main',
         ],
     },
 )

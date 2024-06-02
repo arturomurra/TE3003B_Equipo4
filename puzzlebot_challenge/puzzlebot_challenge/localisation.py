@@ -2,6 +2,7 @@
 import rclpy
 import math
 import numpy as np
+from math import sin, cos, inf, pi
 from numpy.linalg import inv
 from rclpy.node import Node
 from std_msgs.msg import Float32
@@ -9,7 +10,7 @@ from geometry_msgs.msg import Quaternion, Pose
 from nav_msgs.msg import Odometry
 from std_srvs.srv import Empty
 from tf_transformations import quaternion_from_euler
-from puzzlebot_msgs.msg import LandmarkList, Landmark
+from puzzlebot_msgs.msg import LandmarkList, Landmark, ArucoArray
 from rclpy.qos import QoSProfile
 from rclpy.qos import ReliabilityPolicy
 from rclpy.qos import qos_profile_sensor_data
@@ -23,32 +24,34 @@ class Localisation(Node):
         self.wl = 0.0               # Left Wheel
         self.linear_speed = 0.0     # Linear Speed
         self.angular_speed = 0.0    # Angular Speed
-        self.l = 0.19               # Wheelbase
-        self.r = 0.05               # Radius of the Wheel
+        self.l = 0.17               # Wheelbase
+        self.r = 0.06               # Radius of the Wheel
         
         # Constants for error model
-        self.kr = 0.5  #TODO Error coefficient for the right wheel
-        self.kl = 0.5  #TODO Error coefficient for the left wheel
+        self.kr = 0.5  
+        self.kl = 0.5  
 
-        # Starting pose for the puzzlebot
+         # Starting pose for the puzzlebot
         self.angle = 0.0
         self.positionx = 0.0
         self.positiony = 0.0
-        self.landmark_true = {"2":[1.0,0.0]}
+        self.landmark_true = {"9":[-0.309,0.0], "10": [-0.322, 1.57], "11": [-0.282, 3.0215], "12":[0, 3.3225],
+                              "4":[3.14, 0], "5":[3 , -0.364], "7":[1.506, -0.359], "8":[0, -0.385], "1":[1.0, 0.0]}
         self.landmark = LandmarkList()
-        self.landmark.landmarks = [Landmark(x=1.0, y = 0.0, id='2')]
+        self.landmark.landmarks = []
+        self.cube_id = '2'
 
         # Subscribers
         self.sub_wl = self.create_subscription(Float32, '/VelocityEncL', self.cbWl, qos_profile_sensor_data)
         self.sub_wr = self.create_subscription(Float32, '/VelocityEncR', self.cbWr, qos_profile_sensor_data)
-        self.sub_landmarks = self.create_subscription(LandmarkList, '/landmarks', self.landmark_callback, 1)
+        self.aruco_sub = self.create_subscription(ArucoArray, '/aruco_info', self.aruco_callback, 1)
 
         # Publishers 
         self.odom_pub = self.create_publisher(Odometry, 'odom', 1)
 
         # Start the timer now
         self.start_time = self.get_clock().now()
-        time_period = 0.1
+        time_period = 0.02
         self.timer = self.create_timer(time_period, self.odom_reading)
 
 
@@ -59,8 +62,30 @@ class Localisation(Node):
     def cbWl(self, msg):
         self.wl = msg.data
 
-    def landmark_callback(self, msg):
-        self.landmark = msg  # Setup callback for landmarks
+    def aruco_callback(self, msg):
+        self.aruco_info = msg
+        self.landmark.landmarks = []
+        if self.aruco_info.length != 0:
+            for aruco in self.aruco_info.aruco_array:
+                if aruco.id != self.cube_id:
+                    landmark = Landmark()
+                    landmark.id = aruco.id
+                    landmark.x, landmark.y = self.transform_cube_position(aruco.point.point)
+                    self.landmark.landmarks.append(landmark)
+
+    def transform_cube_position(self, aruco_point):
+        rotation_matrix = np.array([
+            [cos(self.angle), -sin(self.angle)],
+            [sin(self.angle), cos(self.angle)]
+        ])
+
+        puzzlebot_coords = np.array([aruco_point.z, aruco_point.x])
+        world_coords = rotation_matrix.dot(puzzlebot_coords)
+
+        aruco_x = self.positionx + world_coords[0]
+        aruco_y = self.positiony + world_coords[1]
+
+        return aruco_x, aruco_y
 
     def kalman_filter(self, previous_pose):
 
@@ -106,7 +131,7 @@ class Localisation(Node):
                                  [np.arctan2(y_diff, x_diff)-self.angle]])
         
         R_k = np.array([[0.01, 0.0],
-                        [0.0, 0.01]])  # TODO: Change for equations from mapping
+                        [0.0, 0.01]])  # Change for equations from mapping
 
         G_k = np.array([    [-x_diff/np.sqrt(z_estimation[0][0]),     -y_diff/np.sqrt(z_estimation[0][0]),   0],
                             [y_diff/z_estimation[0][0],                -x_diff/z_estimation[0][0],             0]])
@@ -134,7 +159,7 @@ class Localisation(Node):
         sigma_full[5, 5] = 0.001  # Small value for orientation around z (yaw)
 
         # self.get_logger().info("Estimation x: {}, y: {}".format(self.positionx, self.positiony))
-        self.get_logger().info("Real x: {}, y: {}".format(u_true[0], u_true[1]))
+        #self.get_logger().info("Real x: {}, y: {}".format(u_true[0], u_true[1]))
 
         return sigma_full, u_true
 
@@ -156,18 +181,24 @@ class Localisation(Node):
         self.positionx += self.linear_speed * np.cos(self.angle) * self.dt
         self.positiony += self.linear_speed * np.sin(self.angle) * self.dt
 
-        sigma_full, u_true = self.kalman_filter(previous_pose)
+        self.get_logger().info("Estimation x: {}, y: {}, theta: {}".format(self.positionx, self.positiony, self.angle))
 
-        self.positionx = u_true[0][0]
-        self.positiony = u_true[1][0]
-        self.angle = u_true[2][0]
+        odom = Odometry()
+
+        # if len(self.landmark.landmarks) > 0:
+
+        #     sigma_full, u_true = self.kalman_filter(previous_pose)
+
+        #     self.positionx = u_true[0][0]
+        #     self.positiony = u_true[1][0]
+        #     self.angle = u_true[2][0]
+        #     odom.pose.covariance = sigma_full.flatten().tolist()  # Set the pose covariance matrix as a list
         
 
         # Publish odometry via odom topic
-        odom = Odometry()
         odom.header.stamp = self.current_time
-        odom.header.frame_id = "odom"  # Set the frame id to "odom"
-        odom.child_frame_id = "base_link"  # Set the child frame id to "base_link"
+        odom.header.frame_id = "odom"  
+        odom.child_frame_id = "base_link"  
         odom.pose.pose.position.x = self.positionx
         odom.pose.pose.position.y = self.positiony  
         q = quaternion_from_euler(0., 0., self.angle)
@@ -175,7 +206,6 @@ class Localisation(Node):
         odom.pose.pose.orientation.y = q[1]
         odom.pose.pose.orientation.z = q[2]
         odom.pose.pose.orientation.w = q[3]
-        odom.pose.covariance = sigma_full.flatten().tolist()  # Set the pose covariance matrix as a list
         odom.twist.twist.linear.x = self.linear_speed
         odom.twist.twist.angular.z = self.angular_speed
         self.odom_pub.publish(odom)

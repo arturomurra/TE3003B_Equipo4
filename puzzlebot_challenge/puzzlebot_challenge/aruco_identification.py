@@ -1,17 +1,15 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, CameraInfo
-from std_msgs.msg import Int32,Float32
-from puzzlebot_msgs.msg import Arucoinfo
+from puzzlebot_msgs.msg import Arucoinfo, ArucoArray
+from geometry_msgs.msg import Point
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
-from pyzbar.pyzbar import decode
-print(cv2.__version__)
 
 class QRCodeTracker(Node):
     def __init__(self):
-        super().__init__('aruco_tracker')
+        super().__init__('aruco_identification')
         self.y = 0
         self.x = 0
         self.height = 0
@@ -24,7 +22,7 @@ class QRCodeTracker(Node):
         self.intrinsics = None
         self.subscription = self.create_subscription(Image, '/video_source/raw', self.image_callback, 10)
         self.subscription_info = self.create_subscription(CameraInfo, '/camera_info', self.camera_info_callback, 10)
-        self.qr_pub = self.create_publisher(Arucoinfo, '/aruco_info', 1)
+        self.qr_pub = self.create_publisher(ArucoArray, '/aruco_info', 1)
 
     def camera_info_callback(self, msg):
         self.intrinsics = {
@@ -34,11 +32,11 @@ class QRCodeTracker(Node):
             'cy': msg.k[5]
         } 
         self.intrinsics = {
-            'fx': 1340.920225,
+            'fx': 1340.920255,
             'fy': 1332.545280,
             'cx': 642.133062,
             'cy': 278.034022
-        } 
+        }  
 
     def image_callback(self, msg):
         if self.intrinsics is None:
@@ -50,8 +48,12 @@ class QRCodeTracker(Node):
         # arucoDict = cv2.aruco.Dictionary_get(cv2.aruco.DICT_4X4_50)
         # arucoParams = cv2.aruco.DetectorParameters_create()
         (corners, ids, rejected) = cv2.aruco.detectMarkers(cv_image, arucoDict, parameters=arucoParams)
+        
 
+        aruco_array = ArucoArray()
+        aruco_array.aruco_array = []
         if corners:
+            aruco_array.length = len(corners)
              # Intrinsic parameters
             fx = self.intrinsics['fx']
             fy = self.intrinsics['fy']
@@ -59,14 +61,19 @@ class QRCodeTracker(Node):
             cy = self.intrinsics['cy']
             for i, aruco in enumerate(corners):
 
-                distances = [np.linalg.norm(corner[0]) for corner in aruco[0]]
-                sorted_indices = np.argsort(distances)
-                sorted_corners = aruco[0][sorted_indices]
+                # Calculate distances from each point to the origin
+                distances = [np.linalg.norm(point) for point in aruco[0]]
 
-                x = int(sum(corner[0][0] for corner in aruco) / len(aruco))
-                y = int(sum(corner[0][1] for corner in aruco) / len(aruco))
-                w = abs(aruco[0][0][0] - aruco[0][1][0])
-                h = abs(aruco[0][0][1] - aruco[0][3][1])
+                # Find the index of the closest point
+                min_index = np.argmin(distances)
+
+                # Reorder the array so the closest point is first
+                sorted_corners = np.roll(aruco[0], -min_index, axis=0)
+
+                x = int(sum(corner[0] for corner in sorted_corners) / len(sorted_corners))
+                y = int(sum(corner[1] for corner in sorted_corners) / len(sorted_corners))
+                w = abs(sorted_corners[0][0] - sorted_corners[1][0])
+                h = abs(sorted_corners[0][1] - sorted_corners[3][1])
 
                 z_3d = (fx * self.object_width_real) / h
 
@@ -77,33 +84,30 @@ class QRCodeTracker(Node):
                 # depth = (focal_length_pixels * self.object_width_real) / w
                 offset = int(self.width/2 - (x+w/2))
                 cv2.aruco.drawDetectedMarkers(cv_image, corners)
-                cv2.putText(cv_image, str(np.round(z_3d, 2))+str(np.round(x_3d, 2))+str(np.round(y_3d, 2)), (x , y ), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                qr_info = Arucoinfo()
-                qr_info.tag = str(i)
-                qr_info.depth = z_3d
-                qr_info.offset = offset
-                self.qr_pub.publish(qr_info)
+                coords = str(np.round(x_3d, 2)) + ", " + str(np.round(y_3d, 2)) + ", " + str(np.round(z_3d, 2))
+                cv2.putText(cv_image, coords, (x , y ), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                aruco_info = Arucoinfo()
+                aruco_info.tag = str(i)
+                aruco_info.id = str(ids[i][0])
+                aruco_info.point.header.frame_id = 'puzzlebot'
+                aruco_info.point.point.x = x_3d
+                aruco_info.point.point.y = y_3d
+                aruco_info.point.point.z = z_3d
+                aruco_info.offset = offset
+                aruco_info.height = float(h)
+                aruco_info.width = float(w)
+                aruco_info.corners = []
+                aruco_info.corners.append(Point(x=float(sorted_corners[0][0]), y = float(sorted_corners[0][1])))
+                aruco_info.corners.append(Point(x=float(sorted_corners[1][0]), y = float(sorted_corners[1][1])))
+                aruco_info.corners.append(Point(x=float(sorted_corners[2][0]), y = float(sorted_corners[2][1])))
+                aruco_info.corners.append(Point(x=float(sorted_corners[3][0]), y = float(sorted_corners[3][1])))
+                aruco_array.aruco_array.append(aruco_info)
+        else:
+            aruco_array.length = 0        
+        self.qr_pub.publish(aruco_array)
 
-        """if qr_codes:
-            for i, qr_code in enumerate(qr_codes):
-                data = qr_code.data.decode('utf-8')
-                (x, y, w, h) = qr_code.rect
-                focal_length_pixels = self.focal_length_mm * (self.image_width_pixels / self.sensor_width_mm)
-                depth = (focal_length_pixels * self.object_width_real) / w
-                offset = int(self.width/2 - (x+w/2))
-                cv2.rectangle(cv_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                cv2.putText(cv_image, str(depth), (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                qr_info = Arucoinfo()
-                qr_info.qr_exists = True
-                qr_info.tag = 'OneAndOnly'
-                qr_info.depth = depth
-                qr_info.offset = offset
-                self.qr_pub.publish(qr_info)
-                # self.get_logger().info(f"Detected QR code with data: {data}, at position: ({x}, {y})")"""
-        
-
-        cv2.imshow("QR Code Tracking", cv_image)
-        cv2.waitKey(1)
+        # cv2.imshow("Aruco Tracking", cv_image)
+        # cv2.waitKey(1)
 
 def main(args=None):
     rclpy.init(args=args)
