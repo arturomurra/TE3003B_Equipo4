@@ -5,7 +5,7 @@ import time
 from geometry_msgs.msg import Point, Twist
 from nav_msgs.msg import Odometry
 from puzzlebot_msgs.msg import ArucoArray, Arucoinfo
-from std_msgs.msg import Int32, Float32, Bool
+from std_msgs.msg import Int32, Float32, Bool, String
 from tf_transformations import euler_from_quaternion
 
 class ObjectHandler(Node):
@@ -17,6 +17,7 @@ class ObjectHandler(Node):
         self.handle_sub = self.create_subscription(Int32, '/handle', self.handle_callback, 10)
         self.odom_sub = self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
         self.handle_run_sub = self.create_subscription(Bool, '/handle_run', self.align_to_aruco, 1)
+        #self.aruco_goal_sub = self.create_subscription(String, '/aruco_goal', self.aruco_goal_callback, 1)
 
         # Publishers
         self.handled_pub = self.create_publisher(Bool, '/handled_aruco', 1)
@@ -40,9 +41,9 @@ class ObjectHandler(Node):
         self.linear_ki = 0.0
         self.linear_kd = 0.05
 
-        self.angular_kp = 0.05
+        self.angular_kp = 0.06
         self.angular_ki = 0.0
-        self.angular_kd = 0.02
+        self.angular_kd = 0.04
 
         self.integral = 0.0
 
@@ -61,6 +62,8 @@ class ObjectHandler(Node):
         self.a_goal = Arucoinfo()
         self.b_goal = Arucoinfo()
         self.c_goal = Arucoinfo()
+        #self.main_goal = ""
+        #self.aruco_goal = Arucoinfo()
 
         self.a_goal_init_offset = 0.0
         self.b_goal_init_offset = 0.0
@@ -90,16 +93,10 @@ class ObjectHandler(Node):
                 # Goal data
                 elif msg.aruco_array[index].id == '1':
                     self.a_goal = msg.aruco_array[index]
-                    if self.a_goal_init_offset == 0.0 and self.b_goal_init_offset == 0.0 and self.c_goal_init_offset == 0.0:
-                        self.a_goal_init_offset = self.a_goal.offset
                 elif msg.aruco_array[index].id == '8':
                     self.b_goal = msg.aruco_array[index]
-                    if self.a_goal_init_offset == 0.0 and self.b_goal_init_offset == 0.0 and self.c_goal_init_offset == 0.0:
-                        self.b_goal_init_offset = self.b_goal.offset
                 elif msg.aruco_array[index].id == '3':
                     self.c_goal = msg.aruco_array[index]
-                    if self.a_goal_init_offset == 0.0 and self.b_goal_init_offset == 0.0 and self.c_goal_init_offset == 0.0:
-                        self.c_goal_init_offset = self.b_goal.offset
 
     def handle_callback(self, msg):
         self.handle_instruction = msg
@@ -112,14 +109,23 @@ class ObjectHandler(Node):
         quaternion = msg.pose.pose.orientation
         self.current_angle = euler_from_quaternion([quaternion.x, quaternion.y, quaternion.z, quaternion.w])[2]
 
+    #def aruco_goal_callback(self, msg):
+    #    self.main_goal = msg
+    #    if self.main_goal == "A":
+    #        self.aruco_goal = self.a_goal
+    #    elif self.main_goal == "B":
+    #        self.aruco_goal = self.b_goal
+    #    elif self.main_goal == "C":
+    #        self.aruco_goal = self.c_goal
     ##############################
     # Handling Object
     ##############################
 
     def align_to_aruco(self, msg):
-        if not self.aligned:
+        self.get_logger().info(f'Running')
+        if not self.aligned and self.handle_instruction.data == 0:
             self.aligned = self.velocity_control()
-        elif self.aligned and not self.aruco_handled.data:
+        elif (self.aligned and not self.aruco_handled.data) or self.handle_instruction.data == 1:
             self.handle_aruco()
             self.aligned = False
 
@@ -134,23 +140,13 @@ class ObjectHandler(Node):
         if self.handle_instruction.data == 0:
             self.pick_or_drop_pub.publish(pick_up)
         elif self.handle_instruction.data == 1:
-            self.pick_or_drop_pub.publish(drop_off)
-            self.get_logger().info(f'DROPPED')
-
-            # self.output_velocity.linear.x = -0.1
-            # self.output_velocity.angular.z = 0.0
-            # self.cmd_vel_pub.publish(self.output_velocity)
-            # time.sleep(0.5)
-
-            # self.output_velocity.linear.x = 0.0
-            # self.output_velocity.angular.z = 0.0
-            # self.cmd_vel_pub.publish(self.output_velocity)
-
-            self.go_backwards(0.1)
-            self.get_logger().info(f'GO_BACKWARDS')
-            time.sleep(0.5)
+            self.go_fordward(0.1)
+            time.sleep(3)
             self.go_stop()
-            self.get_logger().info(f'STOPPED')
+            self.pick_or_drop_pub.publish(drop_off)
+            self.go_backwards(0.1)
+            time.sleep(3)
+            self.go_stop()
 
         self.aruco_handled.data = True
         self.handled_pub.publish(self.aruco_handled)
@@ -206,13 +202,8 @@ class ObjectHandler(Node):
 
         if self.handle_instruction.data == 0:
             self.angle_error = self.left_aruco.offset * offset_scaling + self.right_aruco.offset * offset_scaling
-        elif self.handle_instruction.data == 1:
-            if self.a_goal_init_offset > 0.0:
-                self.angle_error = self.a_goal_init_offset * offset_scaling - self.a_goal.offset * offset_scaling
-            elif self.b_goal_init_offset > 0.0:
-                self.angle_error = self.b_goal_init_offset * offset_scaling - self.b_goal.offset * offset_scaling
-            elif self.c_goal_init_offset > 0.0:
-                self.angle_error = self.c_goal_init_offset * offset_scaling - self.c_goal.offset * offset_scaling
+        else:
+            self.angle_error = 0.0
 
         self.total_position_error = np.sqrt(x_error**2 + y_error**2)
 
@@ -225,7 +216,7 @@ class ObjectHandler(Node):
         self.dt = self.duration.nanoseconds * 1e-9
 
         # Calculate resultant error
-        self.resultant_error(self.current_position_x + 0.1, self.current_position_y + 0.1)
+        self.resultant_error(self.current_position_x + 0.2, self.current_position_y + 0.2)
 
         # Adjust current pose
         self.output_position, self.prev_position_error = self.PID(self.total_position_error, self.prev_position_error, self.linear_kp, self.linear_ki, self.linear_kd)
@@ -235,21 +226,12 @@ class ObjectHandler(Node):
         self.output_velocity.angular.z = self.output_angle
         self.get_logger().info(f'instruction_state: {self.handle_instruction.data}')
 
-        # self.get_logger().info(f'Velocity Control: linear={self.output_velocity.linear.x} angular={self.output_velocity.angular.z}')
+        self.get_logger().info(f'Velocity Control: linear={self.output_velocity.linear.x} angular={self.output_velocity.angular.z}')
 
         if self.handle_instruction.data == 0:
             if self.aruco_array.length == 0:
-                # self.output_velocity.linear.x = 0.1
-                # self.output_velocity.angular.z = 0.0
-                # self.cmd_vel_pub.publish(self.output_velocity)
-                # time.sleep(1.9)
-
-                # self.output_velocity.linear.x = 0.0
-                # self.output_velocity.angular.z = 0.0
-                # self.cmd_vel_pub.publish(self.output_velocity)
-
                 self.go_fordward(0.1)
-                time.sleep(2.4)
+                time.sleep(2.0)
                 self.go_stop()
 
                 return True
@@ -260,16 +242,10 @@ class ObjectHandler(Node):
         elif self.handle_instruction.data == 1:
             if self.aruco_array.length > 0:
                 for index in range(0, self.aruco_array.length):
-                    if self.aruco_array[index].id == '1':
-                # self.output_velocity.linear.x = 0.0
-                # self.output_velocity.angular.z = 0.0
-                # self.cmd_vel_pub.publish(self.output_velocity)
-                        self.get_logger().info(f'FOUND GOAL A')
+                    if self.aruco_array.aruco_array[index].id == self.a_goal.id:
                         self.go_fordward(0.1)
-                        self.get_logger().info(f'FORWARD')
-                        time.sleep(0.5)
+                        time.sleep(0.1)
                         self.go_stop()
-                        self.get_logger().info(f'STOPPED')
 
                 return True
             

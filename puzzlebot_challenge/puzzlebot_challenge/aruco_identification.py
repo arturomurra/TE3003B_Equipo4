@@ -32,11 +32,17 @@ class QRCodeTracker(Node):
             'cy': msg.k[5]
         } 
         self.intrinsics = {
-            'fx': 1340.920255,
-            'fy': 1332.545280,
-            'cx': 642.133062,
-            'cy': 278.034022
-        }  
+            'fx': 1284.144242,
+            'fy': 1290.880880,
+            'cx': 598.847438,
+            'cy': 351.188314
+        } 
+        self.intrinsics = {
+            'fx': 1294.852001,
+            'fy': 1299.050763,
+            'cx': 627.413749,
+            'cy': 373.197113
+        } 
 
     def image_callback(self, msg):
         if self.intrinsics is None:
@@ -77,12 +83,12 @@ class QRCodeTracker(Node):
 
                 z_3d = (fx * self.object_width_real) / h
 
-                x_3d = (x - cx) * z_3d / fx
+                x_3d = -(x - cx) * z_3d / fx
                 y_3d = (y - cy) * z_3d / fy
 
                 # focal_length_pixels = self.focal_length_mm * (self.image_width_pixels / self.sensor_width_mm)
                 # depth = (focal_length_pixels * self.object_width_real) / w
-                offset = int(self.width/2 - (x+w/2))
+                offset = int(self.width/2 - x)
                 cv2.aruco.drawDetectedMarkers(cv_image, corners)
                 coords = str(np.round(x_3d, 2)) + ", " + str(np.round(y_3d, 2)) + ", " + str(np.round(z_3d, 2))
                 cv2.putText(cv_image, coords, (x , y ), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)

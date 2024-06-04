@@ -58,7 +58,7 @@ class Bug2Controller(Node):
 
         # Initialize ROS publisher for velocity commands
         self.cmd_vel_pub = self.create_publisher( Twist, '/cmd_vel', 1)
-        self.arrive_pub = self.create_publisher( Bool, '/Arrived', 1)
+        self.arrive_pub = self.create_publisher( Bool, '/arrived', 1)
 
         # Initialize ROS subscribers for odometry, goal, and laser scan data
         self.create_subscription( Odometry, '/odom', self.odom_callback, 1)
@@ -90,7 +90,7 @@ class Bug2Controller(Node):
 
         # Rotate the robot towards the goal if the angle error is significant
         if np.fabs(angle_error) > np.pi/180:
-            self.cmd_vel.angular.z = 0.5 if angle_error > 0 else -0.5
+            self.cmd_vel.angular.z = 0.05 if angle_error > 0 else -0.05
         else:
             self.cmd_vel.angular.z = 0.0
             self.current_state = StateMachine.FOLLOW_LINE  # Switch to FOLLOW_LINE state

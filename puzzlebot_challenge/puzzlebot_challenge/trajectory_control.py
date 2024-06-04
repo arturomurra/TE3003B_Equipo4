@@ -40,6 +40,7 @@ class TrajectoryControl(Node):
         self.bug_pub = self.create_publisher(Bool, '/bug2_run', 1)
         self.handle_run_pub = self.create_publisher(Bool, '/handle_run', 1)
         self.handle_pub = self.create_publisher(Int32, '/handle', 1)
+        self.aruco_goal_pub = self.create_publisher(String, '/aruco_goal', 1)
         
         # Inicialización de la pose y ángulo actual
         self.current_pose = PoseStamped()
@@ -94,7 +95,7 @@ class TrajectoryControl(Node):
 
         self.goal_ids = {
             'A': '1',
-            'B': '13',
+            'B': '8',
             'C': '3'
         }
 
@@ -103,7 +104,7 @@ class TrajectoryControl(Node):
         # Configurar las coordenadas de cada punto
         self.convergence_point = PoseStamped()
         self.convergence_point.pose.position.x = 2.4
-        self.convergence_point.pose.position.y = 1.9
+        self.convergence_point.pose.position.y = 2.2
         self.convergence_point.pose.position.z = 0.0
         self.convergence_point.header.frame_id = 'world'
 
@@ -164,7 +165,7 @@ class TrajectoryControl(Node):
                     stop_spin_msg = Twist()
                     self.velocity_pub.publish(stop_spin_msg)
                     self.handle_pub.publish(Int32(data = 1))
-                    self.object_state = ''
+                    self.object_state = 'dropped'
                     self.current_state = StateMachine.HANDLE_OBJECT
             else:
                 spin_msg = Twist()
@@ -227,7 +228,6 @@ class TrajectoryControl(Node):
                     self.goal.pose.position.y = 0.0
                     self.goal_pub.publish(self.goal)
                     self.current_state = StateMachine.STOP
-                    self.object_state = ''
                 else: 
                     self.handle_run_pub.publish(Bool(data=True))
             else:

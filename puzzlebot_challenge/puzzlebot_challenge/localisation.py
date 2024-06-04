@@ -25,13 +25,13 @@ class Localisation(Node):
         self.linear_speed = 0.0     # Linear Speed
         self.angular_speed = 0.0    # Angular Speed
         self.l = 0.17               # Wheelbase
-        self.r = 0.06               # Radius of the Wheel
+        self.r = 0.06              # Radius of the Wheel
         
         # Constants for error model
-        self.kr = 0.5  
-        self.kl = 0.5  
+        self.kr = 0.5  #TODO Error coefficient for the right wheel
+        self.kl = 0.5  #TODO Error coefficient for the left wheel
 
-         # Starting pose for the puzzlebot
+        # Starting pose for the puzzlebot
         self.angle = 0.0
         self.positionx = 0.0
         self.positiony = 0.0
@@ -44,7 +44,7 @@ class Localisation(Node):
         # Subscribers
         self.sub_wl = self.create_subscription(Float32, '/VelocityEncL', self.cbWl, qos_profile_sensor_data)
         self.sub_wr = self.create_subscription(Float32, '/VelocityEncR', self.cbWr, qos_profile_sensor_data)
-        self.aruco_sub = self.create_subscription(ArucoArray, '/aruco_info', self.aruco_callback, 1)
+        self.aruco_sub = self.create_subscription(ArucoArray, '/aruco_info', self.aruco_callback, 10)
 
         # Publishers 
         self.odom_pub = self.create_publisher(Odometry, 'odom', 1)
@@ -131,7 +131,7 @@ class Localisation(Node):
                                  [np.arctan2(y_diff, x_diff)-self.angle]])
         
         R_k = np.array([[0.01, 0.0],
-                        [0.0, 0.01]])  # Change for equations from mapping
+                        [0.0, 0.01]])  # TODO: Change for equations from mapping
 
         G_k = np.array([    [-x_diff/np.sqrt(z_estimation[0][0]),     -y_diff/np.sqrt(z_estimation[0][0]),   0],
                             [y_diff/z_estimation[0][0],                -x_diff/z_estimation[0][0],             0]])
@@ -159,7 +159,7 @@ class Localisation(Node):
         sigma_full[5, 5] = 0.001  # Small value for orientation around z (yaw)
 
         # self.get_logger().info("Estimation x: {}, y: {}".format(self.positionx, self.positiony))
-        #self.get_logger().info("Real x: {}, y: {}".format(u_true[0], u_true[1]))
+        # self.get_logger().info("Real x: {}, y: {}".format(u_true[0], u_true[1]))
 
         return sigma_full, u_true
 
@@ -181,7 +181,7 @@ class Localisation(Node):
         self.positionx += self.linear_speed * np.cos(self.angle) * self.dt
         self.positiony += self.linear_speed * np.sin(self.angle) * self.dt
 
-        self.get_logger().info("Estimation x: {}, y: {}, theta: {}".format(self.positionx, self.positiony, self.angle))
+        #self.get_logger().info("Estimation x: {}, y: {}, theta: {}".format(self.positionx, self.positiony, self.angle))
 
         odom = Odometry()
 
@@ -197,8 +197,8 @@ class Localisation(Node):
 
         # Publish odometry via odom topic
         odom.header.stamp = self.current_time
-        odom.header.frame_id = "odom"  
-        odom.child_frame_id = "base_link"  
+        odom.header.frame_id = "odom"  # Set the frame id to "odom"
+        odom.child_frame_id = "base_link"  # Set the child frame id to "base_link"
         odom.pose.pose.position.x = self.positionx
         odom.pose.pose.position.y = self.positiony  
         q = quaternion_from_euler(0., 0., self.angle)

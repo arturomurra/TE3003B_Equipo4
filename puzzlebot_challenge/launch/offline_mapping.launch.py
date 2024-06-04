@@ -58,6 +58,11 @@ def generate_launch_description():
         arguments = ['0', '0', '0', '0', '0', '0', "base_link", "odom"]
     )
 
+    sync_slam = Node(
+        package = 'slam_toolbox',
+        executable = 'sync_slam_toolbox_node',
+        name = 'sync_slam_toolbox_node',
+    )
 
     return LaunchDescription([
         rviz_param,
@@ -67,8 +72,8 @@ def generate_launch_description():
         rplidar_launch,
         offline_mapping_launch,
         rviz_launch,
-       # tf_solution,
+        # tf_solution,
         tf_base_laser,
         tf_base_odom,
-       
+        sync_slam,
     ])

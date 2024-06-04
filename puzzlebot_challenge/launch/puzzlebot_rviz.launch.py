@@ -78,7 +78,7 @@ def generate_launch_description():
         name='Bug2'
     )
 
-    handle_object = Node(
+    handle = Node(
         package='puzzlebot_challenge',
         executable='handle_object',
         name='handle_object'
@@ -95,7 +95,7 @@ def generate_launch_description():
         trayectory,
         bug2,
         aruco,
-        handle_object,
+        handle,
         #simlulation
     ])
 
