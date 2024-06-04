@@ -109,14 +109,6 @@ class ObjectHandler(Node):
         quaternion = msg.pose.pose.orientation
         self.current_angle = euler_from_quaternion([quaternion.x, quaternion.y, quaternion.z, quaternion.w])[2]
 
-    #def aruco_goal_callback(self, msg):
-    #    self.main_goal = msg
-    #    if self.main_goal == "A":
-    #        self.aruco_goal = self.a_goal
-    #    elif self.main_goal == "B":
-    #        self.aruco_goal = self.b_goal
-    #    elif self.main_goal == "C":
-    #        self.aruco_goal = self.c_goal
     ##############################
     # Handling Object
     ##############################

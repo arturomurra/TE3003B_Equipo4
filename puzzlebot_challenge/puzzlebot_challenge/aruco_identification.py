@@ -32,16 +32,10 @@ class QRCodeTracker(Node):
             'cy': msg.k[5]
         } 
         self.intrinsics = {
-            'fx': 1284.144242,
-            'fy': 1290.880880,
-            'cx': 598.847438,
-            'cy': 351.188314
-        } 
-        self.intrinsics = {
-            'fx': 1294.852001,
-            'fy': 1299.050763,
-            'cx': 627.413749,
-            'cy': 373.197113
+            'fx': 340.920225,
+            'fy': 1332.545280,
+            'cx': 642.133062,
+            'cy':278.034022
         } 
 
     def image_callback(self, msg):
